@@ -329,6 +329,9 @@ pub struct SourceIdentifier {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Repository {
+    /// identifier for the build that generated this repository metadata
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub build_id: String,
     /// list of published packages
     pub packages: BTreeMap<String, String>,
     /// list of outdated/missing packages, with source identifier when it first time went outdated/missing
@@ -424,6 +427,8 @@ mod tests {
     "#;
 
     const WORKING_REPOSITORY: &str = r#"
+    build_id = "0123456789abcdef0123456789abcdef01234567"
+
     [packages]
     foo = "bar"
     "#;
@@ -540,6 +545,7 @@ mod tests {
     fn deserialize_repository() -> Result<(), PackageError> {
         let actual = Repository::from_toml(WORKING_REPOSITORY)?;
         let expected = Repository {
+            build_id: "0123456789abcdef0123456789abcdef01234567".into(),
             packages: BTreeMap::from([("foo".into(), "bar".into())]),
             ..Default::default()
         };
