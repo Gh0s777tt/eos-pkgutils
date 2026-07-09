@@ -191,6 +191,8 @@ impl Callback for IndicatifCallback {
 
     fn abort_end(&mut self) {
         self.pb.finish_and_clear();
-        println!("Transaction aborted successfully.");
+        if !self.unknown_len {
+            println!("Transaction aborted successfully.");
+        }
     }
 }

@@ -310,6 +310,42 @@ impl Borrow<str> for PackageName {
 pub struct PackageInfo {
     pub installed: bool,
     pub package: RemotePackage,
+    pub remote: crate::RemotePath,
+}
+
+impl fmt::Display for PackageInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let p = &self.package.package;
+
+        let deps: Vec<_> = p.depends.iter().map(|d| d.as_str()).collect();
+        let deps_str = if deps.is_empty() {
+            "[none]".to_string()
+        } else {
+            deps.join(", ")
+        };
+
+        writeln!(
+            f,
+            "status:        {}",
+            if self.installed {
+                "installed"
+            } else {
+                "not installed"
+            }
+        )?;
+        writeln!(f, "name:          {}", p.name.as_str())?;
+        writeln!(f, "version:       {}", p.version)?;
+        writeln!(f, "remote:        {}", self.package.remote)?;
+        writeln!(f, "remote_path:   {}", self.remote.path)?;
+        writeln!(f, "target:        {}", p.target)?;
+        writeln!(f, "storage_size:  {} bytes", p.storage_size)?;
+        writeln!(f, "network_size:  {} bytes", p.network_size)?;
+        writeln!(f, "blake3:        {}", p.blake3)?;
+        writeln!(f, "source_id:     {}", p.source_identifier)?;
+        writeln!(f, "build_id:      {}", p.commit_identifier)?;
+        writeln!(f, "build_date:    {}", p.time_identifier)?;
+        writeln!(f, "depends:       {}", deps_str)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
