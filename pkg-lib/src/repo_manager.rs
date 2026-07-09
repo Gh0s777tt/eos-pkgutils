@@ -6,6 +6,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::{fs, path::PathBuf};
 
+use crate::backend::wrap_io_err;
 use crate::callback::Callback;
 #[cfg(feature = "library")]
 use crate::net_backend::DownloadError;
@@ -72,14 +73,14 @@ impl RepoPublicKeyFile {
     }
 
     pub fn open(file: impl AsRef<Path>) -> Result<RepoPublicKeyFile, Error> {
-        let content = fs::read_to_string(file.as_ref()).map_err(Error::IO)?;
-        toml::from_str(&content).map_err(|_| {
-            Error::ContentIsNotValidUnicode(file.as_ref().to_string_lossy().to_string())
-        })
+        let file = file.as_ref();
+        let content = fs::read_to_string(file).map_err(wrap_io_err!(file, "Reading"))?;
+        toml::from_str(&content).map_err(|e| Error::TomlRead(e))
     }
 
     pub fn save(&self, file: impl AsRef<Path>) -> Result<(), Error> {
-        fs::write(file, toml::to_string(&self).unwrap()).map_err(Error::IO)
+        let file = file.as_ref();
+        fs::write(file, toml::to_string(&self).unwrap()).map_err(wrap_io_err!(file, "Writing"))
     }
 }
 
@@ -136,8 +137,10 @@ impl RepoManager {
 
         let repos_path = install_path.join(PACKAGES_REMOTE_DIR);
         let mut repo_files = Vec::new();
-        for entry_res in fs::read_dir(&repos_path)? {
-            let entry = entry_res?;
+        for entry_res in
+            fs::read_dir(&repos_path).map_err(wrap_io_err!(&repos_path, "Reading dir"))?
+        {
+            let entry = entry_res.map_err(wrap_io_err!(&repos_path, "Reading dir item"))?;
             let path = entry.path();
             if path.is_file() {
                 repo_files.push(path);
@@ -145,7 +148,8 @@ impl RepoManager {
         }
         repo_files.sort();
         for repo_file in repo_files {
-            let data = fs::read_to_string(repo_file)?;
+            let data =
+                fs::read_to_string(&repo_file).map_err(wrap_io_err!(&repo_file, "Reading"))?;
             for line in data.lines() {
                 if !line.starts_with('#') {
                     self.add_remote(line.trim(), target)?;
@@ -207,7 +211,11 @@ impl RepoManager {
             ));
         }
         // load to check for failure early
-        let pubkey = RepoPublicKeyFile::open(pubkey_path).map_err(Error::from)?;
+        let pubkey = RepoPublicKeyFile::open(&pubkey_path).map_err(|e| {
+            // probably corrupted
+            let _ = fs::remove_file(&pubkey_path);
+            e
+        })?;
         if self
             .remote_map
             .insert(
@@ -235,7 +243,7 @@ impl RepoManager {
     fn sync_toml(&self, package_name: &PackageName) -> Result<(String, RemoteName), Error> {
         let file = format!("{package_name}.toml");
         if let Some((r, path)) = self.local_search(&file)? {
-            let toml = fs::read_to_string(path)?;
+            let toml = fs::read_to_string(&path).map_err(wrap_io_err!(&path, "Reading"))?;
             return Ok((toml, r));
         }
         let mut writer = DownloadBackendWriter::ToBuf(Vec::new());
@@ -264,7 +272,9 @@ impl RepoManager {
         if let Some((r, path)) = self.local_search(&file)? {
             return Ok((path, r));
         }
-        let mut writer = DownloadBackendWriter::ToFile(File::create(&dst_path)?);
+        let mut writer = DownloadBackendWriter::ToFile(
+            File::create(&dst_path).map_err(wrap_io_err!(&dst_path, "Creating"))?,
+        );
         match self.download(&file, Some(len_hint), &mut writer) {
             Ok(r) => Ok((dst_path, r)),
             Err(Error::ValidRepoNotFound) => {
@@ -280,18 +290,33 @@ impl RepoManager {
 
     /// Downloads all keys
     pub fn sync_keys(&mut self) -> Result<(), Error> {
+        self.sync_keys_internal(false, false)
+    }
+
+    /// Downloads all keys forcibly
+    pub fn force_sync_keys(&mut self) -> Result<(), Error> {
+        self.sync_keys_internal(true, false)
+    }
+
+    /// Downloads all keys forcibly for testing
+    pub fn test_sync_keys(&mut self) -> Result<(), Error> {
+        self.sync_keys_internal(true, true)
+    }
+
+    fn sync_keys_internal(&mut self, force: bool, cleanup: bool) -> Result<(), Error> {
         let download_dir = &self.download_path;
         if !download_dir.is_dir() {
-            fs::create_dir_all(download_dir)?;
+            fs::create_dir_all(&download_dir)
+                .map_err(wrap_io_err!(&download_dir, "Creating dir"))?;
         }
         for (_, remote) in self.remote_map.iter_mut() {
             if remote.pubkey.is_some() {
                 continue;
             }
             // download key if not exists
-            if remote.pubkey.is_none() {
+            if force || remote.pubkey.is_none() {
                 let local_keypath = download_dir.join(format!("pub_key_{}.toml", remote.name));
-                if !local_keypath.exists() {
+                if force || !local_keypath.exists() {
                     self.download_backend.download_to_file(
                         &remote.pubpath,
                         None,
@@ -299,7 +324,14 @@ impl RepoManager {
                         self.callback.clone(),
                     )?;
                 }
-                let pubkey = RepoPublicKeyFile::open(local_keypath)?;
+                let pubkey = RepoPublicKeyFile::open(&local_keypath).map_err(|e| {
+                    // probably corrupted
+                    let _ = fs::remove_file(&local_keypath);
+                    e
+                })?;
+                if cleanup {
+                    let _ = fs::remove_file(&local_keypath);
+                }
                 remote.pubkey = Some(pubkey.pkey);
             }
         }
@@ -315,7 +347,8 @@ impl RepoManager {
         mut dest: &mut DownloadBackendWriter,
     ) -> Result<RemoteName, Error> {
         if !self.download_path.exists() {
-            fs::create_dir_all(self.download_path.clone())?;
+            fs::create_dir_all(self.download_path.clone())
+                .map_err(wrap_io_err!(&self.download_path, "Creating dir"))?;
         }
 
         for rname in self.remotes.iter() {
@@ -347,7 +380,8 @@ impl RepoManager {
     /// Locate and return path and report which locals it's downloaded from.
     pub fn local_search(&self, file: &str) -> Result<Option<(RemoteName, PathBuf)>, Error> {
         if !self.download_path.exists() {
-            fs::create_dir_all(self.download_path.clone())?;
+            fs::create_dir_all(self.download_path.clone())
+                .map_err(wrap_io_err!(self.download_path, "Creating directory"))?;
         }
 
         for rname in self.locals.iter() {
@@ -372,7 +406,7 @@ impl RepoManager {
                     if err.kind() == std::io::ErrorKind::NotFound {
                         continue;
                     } else {
-                        return Err(Error::IO(err));
+                        return Err(Error::IO(err, remote_path, "Reading metadata"));
                     }
                 }
             }
@@ -395,7 +429,8 @@ impl RepoManager {
             }
             let new_local_path = self.get_local_path(&r.name, package.as_str(), "pkgar");
             if new_local_path != local_path {
-                fs::rename(&local_path, &new_local_path)?;
+                fs::rename(&local_path, &new_local_path)
+                    .map_err(wrap_io_err!(new_local_path, "Renaming"))?;
             }
             Ok((new_local_path, r))
         } else {
@@ -408,5 +443,10 @@ impl RepoManager {
     pub fn get_package_toml(&self, package: &PackageName) -> Result<(String, RemoteName), Error> {
         self.callback.borrow_mut().fetch_package_name(&package);
         self.sync_toml(package)
+    }
+
+    /// Get remote info, if available
+    pub fn get_remote_info(&self, remote: &RemoteName) -> Option<&RemotePath> {
+        self.remote_map.get(remote)
     }
 }

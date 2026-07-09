@@ -1,12 +1,12 @@
 #[cfg(feature = "library")]
 pub mod pkgar_backend;
 
-use std::io;
+use std::{io, path::PathBuf};
 use thiserror::Error;
 
 use crate::{net_backend::DownloadError, package::PackageError, PackageName};
 #[cfg(feature = "library")]
-use crate::{package::RemotePackage, PackageState, Repository};
+use crate::{package::RemotePackage, PackageState, RemoteName, RemotePath, Repository};
 
 // todo: make this better
 #[derive(Error, Debug)]
@@ -35,12 +35,14 @@ pub enum Error {
     ContentIsNotValidUnicode(String),
     #[error("You don't have permissions required for this action, try performing it as root")]
     MissingPermissions,
+    #[error("Cancelled by user")]
+    Interrupted,
 
     #[error("Package {0:?} is protected")]
     ProtectedPackage(PackageName),
 
-    #[error("IO error: {0}")]
-    IO(io::Error),
+    #[error("IO error: {0}, {2} {1:?}")]
+    IO(io::Error, PathBuf, &'static str),
     #[error("Download error: {0}")]
     Download(#[from] DownloadError),
     #[error("Download error: {0}")]
@@ -57,15 +59,19 @@ impl From<pkgar::Error> for Error {
     }
 }
 
-impl From<std::io::Error> for Error {
-    fn from(value: std::io::Error) -> Self {
-        if value.kind() == std::io::ErrorKind::PermissionDenied {
-            return Error::MissingPermissions;
-        } else {
-            return Error::IO(value);
+macro_rules! wrap_io_err {
+    ($path:expr, $context:expr) => {
+        |source| {
+            if source.kind() == std::io::ErrorKind::PermissionDenied {
+                Error::MissingPermissions
+            } else {
+                Error::IO(source, $path.to_path_buf(), $context)
+            }
         }
-    }
+    };
 }
+
+pub(crate) use wrap_io_err;
 
 #[cfg(feature = "library")]
 pub trait Backend {
@@ -77,6 +83,8 @@ pub trait Backend {
     fn upgrade(&mut self, package: &RemotePackage) -> Result<(), Error>;
     /// download package TOML data
     fn get_package_detail(&self, package: &PackageName) -> Result<RemotePackage, Error>;
+    /// get remote repository detail
+    fn get_remote_detail(&self, package: &RemoteName) -> Result<RemotePath, Error>;
     /// download repo TOML data
     fn get_repository_detail(&self) -> Result<Repository, Error>;
     /// get state of current installation

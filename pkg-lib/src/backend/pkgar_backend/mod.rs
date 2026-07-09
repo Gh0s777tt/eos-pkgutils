@@ -10,11 +10,12 @@ use pkgar_core::PublicKey;
 
 use super::{Backend, Error};
 use crate::{
+    backend::wrap_io_err,
     callback::Callback,
     package::{RemotePackage, Repository},
     package_state::PackageState,
     repo_manager::RepoManager,
-    Package, PackageName, RepoPublicKeyFile,
+    Package, PackageName, RemoteName, RemotePath, RepoPublicKeyFile,
 };
 
 /// Package backend using pkgar
@@ -32,20 +33,21 @@ pub struct PkgarBackend {
 }
 
 impl PkgarBackend {
-    pub fn new<P: AsRef<Path>>(install_path: P, repo_manager: RepoManager) -> Result<Self, Error> {
-        let install_path = install_path.as_ref();
-
-        let packages = PackageState::from_sysroot(install_path)?;
+    pub fn new(install_path: PathBuf, repo_manager: RepoManager) -> Result<Self, Error> {
+        let packages = PackageState::from_sysroot(&install_path)?;
 
         // TODO: Use File::lock. This only checks permission
-        packages.to_sysroot(install_path)?;
+        packages
+            .to_sysroot(&install_path)
+            .map_err(wrap_io_err!(&install_path, "Writing"))?;
 
-        fs::create_dir_all(install_path.join(crate::PACKAGES_HEAD_DIR))?;
+        let dir = install_path.join(crate::PACKAGES_HEAD_DIR);
+        fs::create_dir_all(&dir).map_err(wrap_io_err!(&dir, "Creating dir"))?;
 
         let callback = repo_manager.callback.clone();
 
         Ok(PkgarBackend {
-            install_path: install_path.to_path_buf(),
+            install_path,
             packages,
             repo_manager,
             // packages_lock,
@@ -89,7 +91,7 @@ impl PkgarBackend {
             .join(crate::PACKAGES_HEAD_DIR)
             .join(format!("{package}.pkgar_head"));
 
-        fs::remove_file(path)?;
+        fs::remove_file(&path).map_err(wrap_io_err!(&path, "Removing file"))?;
         Ok(())
     }
 
@@ -181,11 +183,17 @@ impl Backend for PkgarBackend {
 
     fn get_package_detail(&self, package: &PackageName) -> Result<RemotePackage, Error> {
         let (toml, remote) = self.repo_manager.get_package_toml(package)?;
-
         Ok(RemotePackage {
             package: Package::from_toml(&toml)?,
             remote,
         })
+    }
+
+    fn get_remote_detail(&self, package: &RemoteName) -> Result<RemotePath, Error> {
+        self.repo_manager
+            .get_remote_info(package)
+            .map(|e| e.to_owned())
+            .ok_or(Error::ValidRepoNotFound)
     }
 
     /// TODO: Multiple repository support
@@ -234,7 +242,9 @@ impl Backend for PkgarBackend {
             let pk = RepoPublicKeyFile::new(pubkey);
             self.packages.pubkeys.insert(k.to_string(), pk);
         }
-        self.packages.to_sysroot(&self.install_path)?;
+        self.packages
+            .to_sysroot(&self.install_path)
+            .map_err(wrap_io_err!(&self.install_path, "Writing"))?;
         Ok(transaction.total_committed())
     }
 
