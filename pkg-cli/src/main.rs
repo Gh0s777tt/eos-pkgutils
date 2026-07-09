@@ -1,19 +1,29 @@
 use std::{cell::RefCell, io, process, rc::Rc};
 
 use clap::{Parser, Subcommand};
-use pkg::{callback::IndicatifCallback, Library, PackageName};
+use pkg::{
+    backend::Error,
+    callback::IndicatifCallback,
+    net_backend::{CurlBackend, DownloadBackend, ReqwestBackend},
+    Library, LibraryBuilder, PackageName, RepoManager,
+};
 use termion::{color, is_tty, style};
 
 /// Redox Package Manager
-#[derive(Debug, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[command(name = "pkg")]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    // these are optional configuration that will be prompted when needed
+    /// use cURL backend
+    #[arg(long, global = true)]
+    curl: bool,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Clone, Debug, Subcommand)]
 enum Commands {
     /// install package(s)
     #[command(arg_required_else_help = true)]
@@ -60,6 +70,9 @@ enum Commands {
 
     /// list installed packages
     List,
+
+    /// Test if remote repository is working
+    Test,
 }
 
 // TODO: Refactor this
@@ -88,9 +101,8 @@ fn process_packages(input: Vec<String>, library: &mut Library, all: bool) -> Vec
 }
 
 fn main() {
-    let args = Cli::parse();
+    let mut args = Cli::parse();
     let mut callback = IndicatifCallback::new();
-    callback.set_interactive(true);
 
     let (install_path, target) = if cfg!(target_os = "redox") {
         ("/", env!("TARGET"))
@@ -99,46 +111,79 @@ fn main() {
     };
     let color_support_stdout = is_tty(&io::stdout());
     let color_support_stderr = is_tty(&io::stderr());
-    let mut library = Library::new(install_path, target, Rc::new(RefCell::new(callback)))
-        .unwrap_or_else(|err| {
-            eprintln!(
-                "{}Error: Failed to initialize package library: {:?}{}",
-                color::Fg(color::Red),
-                err,
-                style::Reset
-            );
-            if matches!(err, pkg::backend::Error::MissingPermissions) {
-                eprintln!("Hint: You may need root privileges. Try running with 'sudo'.");
-            }
-            std::process::exit(1);
-        });
+    callback.set_interactive(color_support_stdout);
+    let library = LibraryBuilder::new(install_path).with_callback(Rc::new(RefCell::new(callback)));
 
-    execute_command(args.command, &mut library, color_support_stdout).unwrap_or_else(|err| {
-        if color_support_stderr {
-            eprintln!(
-                "{}{}error: {}{}{:?}{}",
-                color::Fg(color::Red),
-                style::Bold,
-                style::Reset,
-                color::Fg(color::Red),
-                err,
-                style::Reset
-            );
+    let err = loop {
+        let net_library = library.clone_with_net_backend(if args.curl {
+            Box::new(CurlBackend::new().unwrap())
         } else {
-            eprintln!("error: {:#?}", err);
+            Box::new(ReqwestBackend::new().unwrap())
+        });
+        match execute_command(args.clone(), net_library, target, color_support_stdout) {
+            Ok(_) => break Ok(()),
+            e @ Err(Error::MissingPermissions) => break e,
+            Err(err @ Error::Download(_)) if !args.curl => {
+                if !color_support_stdout {
+                    break Err(err);
+                }
+                report_error(color_support_stderr, &err);
+                eprintln!("Do you want to retry with curl? [Y/n]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).unwrap_or(0);
+                let input = input.trim().to_lowercase();
+                if input == "n" || input == "no" {
+                    break Err(Error::Interrupted);
+                }
+                args.curl = true
+            }
+            Err(e) => break Err(e),
+        }
+    };
+    if let Err(err) = err {
+        report_error(color_support_stderr, &err);
+        if matches!(err, pkg::backend::Error::MissingPermissions) {
+            // TODO: ask to rerun as sudo
+            eprintln!("Hint: You may need root privileges. Try running with 'sudo'.");
         }
         // TODO: this hanging the terminal
         // process::exit(1);
-    });
+    }
+}
+
+fn report_error(color_support_stderr: bool, err: &Error) {
+    if color_support_stderr {
+        eprintln!(
+            "{}{}error: {}{}{}{}",
+            color::Fg(color::Red),
+            style::Bold,
+            style::Reset,
+            color::Fg(color::Red),
+            *err,
+            style::Reset
+        );
+    } else {
+        eprintln!("error: {}", *err);
+    }
 }
 fn execute_command(
-    command: Commands,
-    library: &mut Library,
+    cli: Cli,
+    library: LibraryBuilder,
+    target: &str,
     color_support: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Error> {
     let mut needs_apply = false;
-
-    match command {
+    let install_path = library.install_path();
+    if matches!(cli.command, Commands::Test) {
+        let mut r: RepoManager = library.try_into()?;
+        r.test_sync_keys()?;
+        eprintln!("OK");
+        return Ok(());
+    }
+    let mut library =
+        Library::new_with_builder(library, |r| r.update_remotes(target, &install_path))?;
+    let library = &mut library;
+    match cli.command {
         Commands::Install { packages, all } => {
             let packages = process_packages(packages, library, all);
             library.install(packages)?;
@@ -164,7 +209,7 @@ fn execute_command(
         Commands::Info { package } => {
             let package = PackageName::new(package)?;
             let info = library.info(package)?;
-            println!("{:#?}", info);
+            println!("{}", info);
         }
         Commands::List => {
             let packages = library.get_installed_packages()?;
@@ -172,6 +217,7 @@ fn execute_command(
                 write_package(i, name, color_support);
             }
         }
+        Commands::Test => unreachable!(),
     }
 
     if needs_apply {

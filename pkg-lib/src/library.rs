@@ -1,15 +1,10 @@
-use std::collections::{btree_map, BTreeMap};
-use std::{cell::RefCell, cmp::Ordering, path::Path, rc::Rc};
-
-use crate::backend::pkgar_backend::PkgarBackend;
 use crate::backend::{Backend, Error};
-use crate::net_backend::{DefaultNetBackend, DownloadBackend};
-use crate::repo_manager::RepoManager;
-
 use crate::callback::Callback;
 use crate::package::{PackageInfo, PackageName, RemotePackage};
-
-use crate::{sorensen, PackageState};
+use crate::repo_manager::RepoManager;
+use crate::{sorensen, LibraryBuilder, PackageState};
+use std::collections::{btree_map, BTreeMap};
+use std::{cell::RefCell, cmp::Ordering, path::Path, rc::Rc};
 
 pub struct Library {
     /// the computed package state before commit
@@ -20,6 +15,21 @@ pub struct Library {
 }
 
 impl Library {
+    /// Create from builder
+    pub fn new_with_builder(
+        builder: LibraryBuilder,
+        remotes_fn: impl Fn(&mut RepoManager) -> Result<(), Error>, // TODO: move to builder
+    ) -> Result<Self, Error> {
+        let callback = builder.callback.clone();
+        let backend = builder.build(remotes_fn)?;
+        Ok(Library {
+            package_state: backend.get_package_state(),
+            backend: backend,
+            cached_info: BTreeMap::new(),
+            callback,
+        })
+    }
+
     /// Create standard network-based package library from existing configuration on install_path
     pub fn new<P: AsRef<Path>>(
         install_path: P,
@@ -27,20 +37,8 @@ impl Library {
         callback: Rc<RefCell<dyn Callback>>,
     ) -> Result<Self, Error> {
         let install_path = install_path.as_ref();
-
-        let download_backend = DefaultNetBackend::new()?;
-
-        let mut repo_manager = RepoManager::new(callback.clone(), Box::new(download_backend));
-        repo_manager.update_remotes(target, install_path)?;
-
-        let backend = PkgarBackend::new(install_path, repo_manager)?;
-
-        Ok(Library {
-            package_state: backend.get_package_state(),
-            backend: Box::new(backend),
-            cached_info: BTreeMap::new(),
-            callback: callback,
-        })
+        let builder = LibraryBuilder::new(install_path).with_callback(callback);
+        Self::new_with_builder(builder, |r| r.update_remotes(target, install_path))
     }
 
     /// Create local-based package library from provided local on install_path
@@ -51,26 +49,14 @@ impl Library {
         target: &str,
         callback: Rc<RefCell<dyn Callback>>,
     ) -> Result<Self, Error> {
-        let install_path = install_path.as_ref();
-
-        let download_backend = DefaultNetBackend::new()?;
-
-        let mut repo_manager = RepoManager::new(callback.clone(), Box::new(download_backend));
-
-        repo_manager.add_local(
-            "local",
-            &source_dir.as_ref().to_string_lossy(),
-            target,
-            pubkey_dir.as_ref(),
-        )?;
-
-        let backend = PkgarBackend::new(install_path, repo_manager)?;
-
-        Ok(Library {
-            package_state: backend.get_package_state(),
-            backend: Box::new(backend),
-            cached_info: BTreeMap::new(),
-            callback: callback,
+        let builder = LibraryBuilder::new(install_path).with_callback(callback);
+        Self::new_with_builder(builder, |r| {
+            r.add_local(
+                "local",
+                &source_dir.as_ref().to_string_lossy(),
+                target,
+                pubkey_dir.as_ref(),
+            )
         })
     }
 
@@ -81,23 +67,12 @@ impl Library {
         target: &str,
         callback: Rc<RefCell<dyn Callback>>,
     ) -> Result<Self, Error> {
-        let install_path = install_path.as_ref();
-
-        let download_backend = DefaultNetBackend::new()?;
-
-        let mut repo_manager = RepoManager::new(callback.clone(), Box::new(download_backend));
-
-        for remote_url in remote_urls {
-            repo_manager.add_remote(remote_url.trim(), target)?;
-        }
-
-        let backend = PkgarBackend::new(install_path, repo_manager)?;
-
-        Ok(Library {
-            package_state: backend.get_package_state(),
-            backend: Box::new(backend),
-            cached_info: BTreeMap::new(),
-            callback: callback,
+        let builder = LibraryBuilder::new(install_path).with_callback(callback);
+        Self::new_with_builder(builder, |r| {
+            for remote_url in remote_urls {
+                r.add_remote(remote_url.trim(), target)?;
+            }
+            Ok(())
         })
     }
 
@@ -285,7 +260,12 @@ impl Library {
     pub fn info(&mut self, package: PackageName) -> Result<PackageInfo, Error> {
         let installed = self.package_state.get_installed_list().contains(&package);
         let package = self.backend.get_package_detail(&package)?;
+        let remote = self.backend.get_remote_detail(&package.remote)?;
 
-        Ok(PackageInfo { installed, package })
+        Ok(PackageInfo {
+            installed,
+            package,
+            remote,
+        })
     }
 }

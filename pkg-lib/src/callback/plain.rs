@@ -72,11 +72,7 @@ impl PlainCallback {
             let input = input.trim().to_lowercase();
 
             if input == "n" || input == "no" {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Interrupted,
-                    "Installation aborted by user",
-                )
-                .into());
+                return Err(Error::Interrupted);
             }
         } else {
             eprintln!();
