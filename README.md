@@ -1,28 +1,32 @@
-# Redox OS pkgutils
+# eos-pkgutils
 
-This repository contains utilities for package management on Redox. Currently, only `pkg` is included.
+**E-OS fork of [`redox-os/pkgutils`](https://gitlab.redox-os.org/redox-os/pkgutils).** Part of the [**E-OS**](https://github.com/Gh0s777tt/E-OS) ecosystem — a hardened, Crimson-branded downstream of [Redox OS](https://www.redox-os.org).
 
-[![Travis Build Status](https://travis-ci.org/redox-os/pkgutils.svg?branch=master)](https://travis-ci.org/redox-os/pkgutils)
-[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+This repository is **`pkg`**, the Redox package manager / client.
 
-## `pkg`
-The command `pkg` is the primary package management utility for Redox OS. In its current state, `pkg` supports the following commands:
+## E-OS changes vs upstream
 
-| Command     | Functionality                  |
-|-------------|--------------------------------|
-| `install`   | Install packages               |
-| `remove`    | Remove packages                |
-| `update`    | Update packages (all if empty) |
-| `search`    | Search for a package           |
-| `info`      | Package info                   |
-| `list`      | List of installed packages     |
+- **R-703** — the client verifies the `repo.toml` **manifest signature** (ed25519 layer of the hybrid `eos-repo-sign`) against an **in-image-pinned key** before trusting the index, blocking rollback / freeze / substitution attacks. _(On the `eos` branch; pin integration pending.)_
 
-For more detailed information on how to invoke these subcommands, please run `pkg help <SUBCOMMAND>` in your terminal.
+## How it's pinned
 
-## testing
+The E-OS build pins this fork in [`recipes/core/pkgutils/recipe.toml`](https://github.com/Gh0s777tt/E-OS/blob/main/recipes/core/pkgutils/recipe.toml):
 
-To run tests, run
+- branch **`master`** · rev **`7e89ac2ebad6`**
+- **2 commit(s) behind** upstream master
 
-```sh
-cargo test -p redox-pkg --features indicatif  -- --nocapture --test-threads=1
-```
+## Build standalone
+
+This fork is normally built by the E-OS cookbook (`make CI=1 …` in the [main repo](https://github.com/Gh0s777tt/E-OS)). To build it on its own you need the Redox toolchain; see the main repo's [build guide](https://github.com/Gh0s777tt/E-OS/blob/main/docs/building.md).
+
+## Hosting
+
+**GitLab (source of truth):** https://gitlab.com/e-os/eos-pkgutils  
+**GitHub (read-only mirror):** https://github.com/Gh0s777tt/eos-pkgutils
+
+## License
+
+MIT (inherited from upstream Redox). The E-OS project as a whole is AGPL-3.0; see the [main repo](https://github.com/Gh0s777tt/E-OS/blob/main/LICENSE).
+
+---
+[E-OS main repo](https://github.com/Gh0s777tt/E-OS) · [Docs](https://github.com/Gh0s777tt/E-OS/tree/main/docs) · [Upstream](https://gitlab.redox-os.org/redox-os/pkgutils)
