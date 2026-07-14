@@ -74,3 +74,45 @@ pub fn verify_manifest_ed25519(
     vk.verify_strict(manifest, &sig)
         .map_err(|_| "repo.toml signature does not match the pinned key")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn make_sig_toml(sk: &SigningKey, msg: &[u8]) -> String {
+        let sig = sk.sign(msg);
+        let hexsig: String = sig.to_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+        format!(
+            "# hybrid signature\n[hybrid_signature]\nversion = 1\ned25519 = \"{hexsig}\"\nml_dsa_65 = \"00\"\n"
+        )
+    }
+
+    #[test]
+    fn accepts_valid_rejects_tampered() {
+        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let pinned = sk.verifying_key().to_bytes();
+        let manifest = b"build_id = \"x\"\n[packages]\nbase = \"blake3:ab\"\n";
+        let sig = make_sig_toml(&sk, manifest);
+
+        // valid manifest + valid sig + correct pinned key -> OK
+        assert!(verify_manifest_ed25519(&pinned, manifest, &sig).is_ok());
+        // tampered manifest -> rejected
+        assert!(verify_manifest_ed25519(&pinned, b"tampered index", &sig).is_err());
+        // wrong pinned key -> rejected
+        let other = SigningKey::from_bytes(&[9u8; 32]).verifying_key().to_bytes();
+        assert!(verify_manifest_ed25519(&other, manifest, &sig).is_err());
+        // malformed / missing sig -> rejected
+        assert!(verify_manifest_ed25519(&pinned, manifest, "no ed25519 here").is_err());
+        assert!(verify_manifest_ed25519(&pinned, manifest, "ed25519 = \"zz\"").is_err());
+    }
+
+    #[test]
+    fn load_pinned_parses_pubkey() {
+        let toml = format!("[public_keys]\ned25519 = \"{}\"\nml_dsa_65 = \"ff\"\n", "ab".repeat(32));
+        assert_eq!(load_pinned_ed25519(&toml), Some([0xab_u8; 32]));
+        assert_eq!(load_pinned_ed25519("garbage = 1"), None);
+        // wrong length ed25519 -> None
+        assert_eq!(load_pinned_ed25519("ed25519 = \"abab\""), None);
+    }
+}
