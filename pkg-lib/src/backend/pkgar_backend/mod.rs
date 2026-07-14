@@ -85,6 +85,33 @@ impl PkgarBackend {
         Ok(pkg)
     }
 
+    /// R-703: verify `repo.toml`'s hybrid signature (ed25519 layer) against the
+    /// in-image-pinned key. If no key is pinned (legacy/dev repo) we proceed with
+    /// a loud warning — per-package pkgar ed25519 signatures are still enforced —
+    /// but once a key is pinned a missing/invalid signature is a hard failure.
+    fn verify_repo_manifest(&self, manifest: &[u8]) -> Result<(), Error> {
+        let key_path = self.install_path.join(crate::REPO_SIGN_PUBKEY_PATH);
+        let pinned = match fs::read_to_string(&key_path)
+            .ok()
+            .and_then(|s| crate::manifest_sig::load_pinned_ed25519(&s))
+        {
+            Some(k) => k,
+            None => {
+                eprintln!(
+                    "pkg: WARNING — no pinned repo-manifest key at {}; repo.toml is NOT signature-verified (R-703).",
+                    key_path.display()
+                );
+                return Ok(());
+            }
+        };
+        let (sig_toml, _) = self
+            .repo_manager
+            .download_to_string("repo.toml.sig")
+            .map_err(|_| Error::RepoManifestUnsigned)?;
+        crate::manifest_sig::verify_manifest_ed25519(&pinned, manifest, &sig_toml)
+            .map_err(Error::RepoManifestSigInvalid)
+    }
+
     fn remove_package_head(&mut self, package: &PackageName) -> Result<(), Error> {
         let path = self
             .install_path
@@ -200,7 +227,8 @@ impl Backend for PkgarBackend {
     fn get_repository_detail(&self) -> Result<Repository, Error> {
         let repo_str = PackageName::new("repo".to_string())?;
         let (toml, _) = self.repo_manager.get_package_toml(&repo_str)?;
-
+        // R-703: authenticate the package index before trusting it.
+        self.verify_repo_manifest(toml.as_bytes())?;
         Ok(Repository::from_toml(&toml)?)
     }
 

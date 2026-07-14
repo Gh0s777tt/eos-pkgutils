@@ -21,6 +21,8 @@ hex = { version = "0.4", features = ["serde"] }
 indicatif = { version = "0.17", optional = true }
 pkgar = { version = "0.2.2", optional = true }
 pkgar-core = { version = "0.2.2", optional = true }
+# R-703: verify the repo.toml manifest signature (ed25519 layer) on-device.
+ed25519-dalek = { version = "2", optional = true }
 # to avoid conflict with libcosmic
 futures-channel = { version = "0.3.32", optional = true }
 serde = "1"
@@ -31,7 +33,7 @@ toml = "0.8.2"
 [features]
 default = ["library"]
 indicatif = ["dep:indicatif", "library"]
-library = ["pkgar", "pkgar-core", "reqwest", "futures-channel"]
+library = ["pkgar", "pkgar-core", "ed25519-dalek", "reqwest", "futures-channel"]
 
 [dependencies.reqwest]
 version = "0.12"

@@ -445,6 +445,20 @@ impl RepoManager {
         self.sync_toml(package)
     }
 
+    /// Download an arbitrary file (e.g. `repo.toml.sig`) to a String, checking
+    /// local repos first. Unlike `sync_toml` this does not append `.toml`.
+    pub fn download_to_string(&self, file: &str) -> Result<(String, RemoteName), Error> {
+        if let Some((r, path)) = self.local_search(file)? {
+            let s = fs::read_to_string(&path).map_err(wrap_io_err!(&path, "Reading"))?;
+            return Ok((s, r));
+        }
+        let mut writer = DownloadBackendWriter::ToBuf(Vec::new());
+        let r = self.download(file, None, &mut writer)?;
+        let s = String::from_utf8(writer.to_inner_buf())
+            .map_err(|_| Error::ContentIsNotValidUnicode(file.into()))?;
+        Ok((s, r))
+    }
+
     /// Get remote info, if available
     pub fn get_remote_info(&self, remote: &RemoteName) -> Option<&RemotePath> {
         self.remote_map.get(remote)

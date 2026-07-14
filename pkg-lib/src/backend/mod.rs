@@ -47,6 +47,10 @@ pub enum Error {
     Download(#[from] DownloadError),
     #[error("Download error: {0}")]
     TomlRead(#[from] toml::de::Error),
+    #[error("repo.toml manifest is unsigned but a manifest key is pinned (R-703); refusing to trust it")]
+    RepoManifestUnsigned,
+    #[error("repo.toml manifest signature invalid: {0}")]
+    RepoManifestSigInvalid(&'static str),
     #[cfg(feature = "library")]
     #[error("pkgar error: {0}")]
     Pkgar(Box<pkgar::Error>),
