@@ -65,7 +65,8 @@ pub fn verify_manifest_ed25519(
     manifest: &[u8],
     sig_toml: &str,
 ) -> Result<(), &'static str> {
-    let vk = VerifyingKey::from_bytes(pinned).map_err(|_| "pinned manifest key is not a valid ed25519 key")?;
+    let vk = VerifyingKey::from_bytes(pinned)
+        .map_err(|_| "pinned manifest key is not a valid ed25519 key")?;
     let sig_bytes: [u8; 64] = field_hex(sig_toml, "ed25519")
         .ok_or("repo.toml.sig has no ed25519 field")?
         .try_into()
@@ -82,7 +83,11 @@ mod tests {
 
     fn make_sig_toml(sk: &SigningKey, msg: &[u8]) -> String {
         let sig = sk.sign(msg);
-        let hexsig: String = sig.to_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+        let hexsig: String = sig
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
         format!(
             "# hybrid signature\n[hybrid_signature]\nversion = 1\ned25519 = \"{hexsig}\"\nml_dsa_65 = \"00\"\n"
         )
@@ -100,7 +105,9 @@ mod tests {
         // tampered manifest -> rejected
         assert!(verify_manifest_ed25519(&pinned, b"tampered index", &sig).is_err());
         // wrong pinned key -> rejected
-        let other = SigningKey::from_bytes(&[9u8; 32]).verifying_key().to_bytes();
+        let other = SigningKey::from_bytes(&[9u8; 32])
+            .verifying_key()
+            .to_bytes();
         assert!(verify_manifest_ed25519(&other, manifest, &sig).is_err());
         // malformed / missing sig -> rejected
         assert!(verify_manifest_ed25519(&pinned, manifest, "no ed25519 here").is_err());
@@ -109,7 +116,10 @@ mod tests {
 
     #[test]
     fn load_pinned_parses_pubkey() {
-        let toml = format!("[public_keys]\ned25519 = \"{}\"\nml_dsa_65 = \"ff\"\n", "ab".repeat(32));
+        let toml = format!(
+            "[public_keys]\ned25519 = \"{}\"\nml_dsa_65 = \"ff\"\n",
+            "ab".repeat(32)
+        );
         assert_eq!(load_pinned_ed25519(&toml), Some([0xab_u8; 32]));
         assert_eq!(load_pinned_ed25519("garbage = 1"), None);
         // wrong length ed25519 -> None
