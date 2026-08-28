@@ -160,6 +160,23 @@ impl PkgarBackend {
     }
 }
 
+/// The pinned public key for a remote, or a typed error saying which remote lacks one.
+///
+/// R-F06: the two call sites below used to unwrap this Option directly. `pubkey` is None
+/// whenever a remote's key has not been loaded -- an ordinary, reachable state, not a bug --
+/// so installing or upgrading from such a remote PANICKED the package manager instead of
+/// reporting the problem. Anyone able to get a keyless remote into /etc/pkg.d could stop the
+/// machine installing or upgrading anything: a denial of service out of a missing file.
+///
+/// Error::RepoNotLoaded already exists for exactly this ("Public key for {0:?} is not
+/// available") and sync_keys() already returns it, so this reports the same failure in the
+/// same words instead of inventing a second vocabulary for it.
+fn require_pubkey(repo: &RemotePath) -> Result<&crate::repo_manager::RepoPublicKey, Error> {
+    repo.pubkey
+        .as_ref()
+        .ok_or_else(|| Error::RepoNotLoaded(repo.name.to_string()))
+}
+
 impl Backend for PkgarBackend {
     fn install(&mut self, package: RemotePackage) -> Result<(), Error> {
         self.sync_keys()?;
@@ -170,10 +187,21 @@ impl Backend for PkgarBackend {
         let (local_path, repo) = self
             .repo_manager
             .get_package_pkgar(&package.package.name, package.package.network_size)?;
-        let mut pkg = PackageFile::new(&local_path, &repo.pubkey.unwrap())?;
+        // R-F06: both of these used to unwrap the Option directly. `pubkey` is
+        // Option<RepoPublicKey> and is None whenever a remote's key has not been loaded --
+        // an ordinary, reachable state, not a bug -- so installing from such a remote
+        // PANICKED the package manager instead of reporting the problem. Anyone able to get
+        // a keyless remote into /etc/pkg.d could therefore stop the machine installing or
+        // upgrading anything: a denial of service out of a missing file.
+        //
+        // Error::RepoNotLoaded already exists for exactly this ("Public key for {0:?} is not
+        // available") and sync_keys() below already returns it, so this reports the same
+        // failure in the same words rather than inventing a second vocabulary for it.
+        let pubkey = require_pubkey(&repo)?;
+        let mut pkg = PackageFile::new(&local_path, pubkey)?;
         self.callback.borrow_mut().install_extract(&package);
         let install = Transaction::install(&mut pkg, &self.install_path)?;
-        self.create_head(&local_path, &package.package.name, &repo.pubkey.unwrap())?;
+        self.create_head(&local_path, &package.package.name, pubkey)?;
         self.add_transaction(install, Some(&pkg));
         Ok(())
     }
@@ -201,9 +229,13 @@ impl Backend for PkgarBackend {
         let (local_path, repo) = self
             .repo_manager
             .get_package_pkgar(name, package.package.network_size)?;
-        let mut pkg2 = PackageFile::new(&local_path, &repo.pubkey.unwrap())?;
+        // R-F06: same as install() above -- a missing remote key gets reported, not
+        // panicked on. Upgrade is the worse place to abort: it can leave the machine on the
+        // old version with nothing said about why the new one never arrived.
+        let pubkey = require_pubkey(&repo)?;
+        let mut pkg2 = PackageFile::new(&local_path, pubkey)?;
         let update = Transaction::replace(&mut pkg, &mut pkg2, &self.install_path)?;
-        self.create_head(&local_path, &name, &repo.pubkey.unwrap())?;
+        self.create_head(&local_path, &name, pubkey)?;
         self.add_transaction(update, Some(&pkg));
         Ok(())
     }
@@ -294,5 +326,42 @@ impl Backend for PkgarBackend {
         }
         self.callback.borrow_mut().abort_end();
         Ok(transaction.total_committed())
+    }
+}
+
+
+#[cfg(test)]
+mod rf06_tests {
+    use super::*;
+
+    use crate::repo_manager::RepoPublicKey;
+
+    fn remote(pubkey: Option<RepoPublicKey>) -> RemotePath {
+        RemotePath {
+            path: "https://example.invalid/pkg".to_string(),
+            pubpath: "https://example.invalid/key".to_string(),
+            name: "test-remote".to_string(),
+            pubkey,
+        }
+    }
+
+    /// The regression itself: a remote with no loaded key must produce an error naming that
+    /// remote, NOT a panic. Before R-F06 this path unwrapped the None and aborted the
+    /// process, which turned a missing key file into a denial of service.
+    #[test]
+    fn missing_pubkey_is_an_error_naming_the_remote() {
+        let err = require_pubkey(&remote(None)).expect_err("a keyless remote must not succeed");
+        match err {
+            Error::RepoNotLoaded(name) => assert_eq!(name, "test-remote"),
+            other => panic!("expected RepoNotLoaded, got {other:?}"),
+        }
+    }
+
+    /// Proves the check is not simply always-failing: with a key present it returns that key.
+    /// A test that cannot pass is as useless as one that cannot fail.
+    #[test]
+    fn present_pubkey_is_returned() {
+        let r = remote(Some([7u8; 32]));
+        assert!(require_pubkey(&r).is_ok(), "a remote with a key must succeed");
     }
 }
