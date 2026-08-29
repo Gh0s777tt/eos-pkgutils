@@ -648,3 +648,48 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod v2_ms15_index_wire_format {
+    use super::*;
+
+    fn repo(serial: u64, expires: u64) -> Repository {
+        Repository {
+            build_id: "t".into(),
+            packages: BTreeMap::new(),
+            outdated_packages: BTreeMap::new(),
+            serial,
+            expires,
+        }
+    }
+
+    /// The publisher and the client are separate binaries built from separate manifests, so the
+    /// only thing actually joining them is the bytes on the wire. A field that exists on both
+    /// sides but never gets serialized is the exact failure this whole milestone is about:
+    /// protection that looks armed and is not.
+    #[test]
+    fn a_real_serial_reaches_the_wire() {
+        let out = toml::to_string(&repo(10172, 1_800_000_000)).unwrap();
+        assert!(out.contains("serial = 10172"), "serial missing from: {out}");
+        assert!(out.contains("expires = 1800000000"), "expires missing from: {out}");
+    }
+
+    /// Zero means "no freshness claim", and it has to travel as an ABSENT field rather than an
+    /// explicit `serial = 0`, because the client reads absence as pre-V2-MS15 and falls back to
+    /// old behaviour. Emitting a literal zero would work today only because the client happens
+    /// to compare the same way; keeping the encodings identical is what makes that safe.
+    #[test]
+    fn a_local_build_claims_nothing() {
+        let out = toml::to_string(&repo(0, 0)).unwrap();
+        assert!(!out.contains("serial"), "unset serial leaked into: {out}");
+        assert!(!out.contains("expires"), "unset expires leaked into: {out}");
+    }
+
+    #[test]
+    fn round_trip_survives_both_ways() {
+        for (s, e) in [(10172u64, 1_800_000_000u64), (0, 0), (1, 0), (0, 5)] {
+            let back: Repository = toml::from_str(&toml::to_string(&repo(s, e)).unwrap()).unwrap();
+            assert_eq!((back.serial, back.expires), (s, e), "lost {s}/{e}");
+        }
+    }
+}
