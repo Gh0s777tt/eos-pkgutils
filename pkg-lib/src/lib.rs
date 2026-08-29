@@ -32,5 +32,11 @@ const PACKAGES_REMOTE_DIR: &str = "etc/pkg.d";
 // R-703/R-702: in-image-pinned public key for the repo.toml manifest signature.
 #[cfg(feature = "library")]
 const REPO_SIGN_PUBKEY_PATH: &str = "etc/pkg/eos-repo-sign.pub.toml";
+/// V2-MS15: where the rollback watermark lives, relative to the install root.
+///
+/// A plain file, deliberately named next to the pinned key so the two are found together.
+/// Root can delete it -- this is a limit of the mechanism, not a secret: it makes the ratchet
+/// a defence against a network attacker, not against a local one.
+const REPO_STATE_PATH: &str = "etc/pkg/repo-state.toml";
 #[cfg(feature = "library")]
 pub const PACKAGES_HEAD_DIR: &str = "var/lib/packages";

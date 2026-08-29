@@ -53,6 +53,35 @@ pub enum Error {
     RepoManifestUnsigned,
     #[error("repo.toml manifest signature invalid: {0}")]
     RepoManifestSigInvalid(&'static str),
+    /// V2-MS15: the index is older than one this machine has already accepted.
+    #[error(
+        "repo.toml is a rollback: serial {got} is below the {seen} this machine has already \
+         accepted. A correctly signed OLD index is still a valid signature, so refusing it is \
+         the only thing that stops a replay."
+    )]
+    RepoManifestRollback { got: u64, seen: u64 },
+    /// V2-MS15: the index passed its expiry -- a host may be freezing updates.
+    #[error(
+        "repo.toml expired at {expires} (now {now}). A host that keeps serving the newest \
+         signed index forever cannot be caught by the serial alone, because its serial equals \
+         the watermark."
+    )]
+    RepoManifestExpired { expires: u64, now: u64 },
+    // R-V2-MS13: the two errors that make the pinned manifest key guard *content*.
+    // They sit next to the R-703 pair on purpose -- same trust anchor, same failure family.
+    #[error(
+        "package {package:?} does not match the signed repo manifest (R-V2-MS13): \
+         manifest says blake3 {expected:?}, downloaded pkgar has {actual:?}"
+    )]
+    ManifestHashMismatch {
+        package: PackageName,
+        expected: String,
+        actual: String,
+    },
+    #[error(
+        "package {0:?} is not listed in the signed repo manifest (R-V2-MS13); refusing to install it"
+    )]
+    PackageNotInManifest(PackageName),
     #[cfg(feature = "library")]
     #[error("pkgar error: {0}")]
     Pkgar(Box<pkgar::Error>),

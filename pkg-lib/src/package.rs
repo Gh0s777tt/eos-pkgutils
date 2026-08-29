@@ -372,6 +372,23 @@ pub struct Repository {
     pub packages: BTreeMap<String, String>,
     /// list of outdated/missing packages, with source identifier when it first time went outdated/missing
     pub outdated_packages: BTreeMap<String, SourceIdentifier>,
+    /// V2-MS15: monotonic publication counter, for rollback protection.
+    ///
+    /// A correctly signed OLD index is still a valid signature, so the signature alone cannot
+    /// tell "current" from "last month's, replayed". The client keeps a watermark and refuses
+    /// anything below it. Zero means absent -- an index published before this field existed --
+    /// which `#[serde(default)]` on this struct gives us for free, so old repositories keep
+    /// parsing.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub serial: u64,
+    /// V2-MS15: expiry, unix seconds UTC, for freeze protection.
+    ///
+    /// The counter alone does not catch a host that simply keeps serving the newest signed
+    /// index forever: its serial equals the watermark, so the ratchet sees nothing wrong.
+    /// An expiry does catch it -- but only as far as the client's clock can be trusted, so a
+    /// machine with no usable clock loses this half and keeps only the ratchet.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub expires: u64,
 }
 
 impl Repository {
