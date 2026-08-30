@@ -15,6 +15,82 @@ use crate::package::RemoteName;
 use crate::{backend::Error, package::PackageError, PackageName};
 use crate::{DOWNLOAD_DIR, PACKAGES_REMOTE_DIR};
 use serde_derive::{Deserialize, Serialize};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Make `path` a directory only we can write into, or fail.
+///
+/// WHY THIS EXISTS. The default download path is `/tmp/pkg_download/`, a fixed name under a
+/// world-writable directory, and the files in it are named predictably (`<remote>_<pkg>.pkgar`).
+/// Nothing checked who owned that directory. Any local user could create it first, or drop a
+/// symlink named after a package into it, and `File::create` -- which follows symlinks -- then
+/// wrote the download through that link with the privileges of whoever ran `pkg`. Demonstrated
+/// before this fix: an unprivileged user planted a link and root's `pkg` created a 868,992-byte
+/// root-owned file at the attacker's chosen path. That is an arbitrary file write as root.
+///
+/// Two things are checked, because either alone leaves a hole: the directory must belong to us
+/// (someone else's directory is refused outright rather than used), and it must not be writable
+/// by group or other (otherwise they can still plant entries in a directory we do own). The
+/// second is repaired rather than rejected -- we own it, so tightening it is both safe and
+/// kinder than failing a build over a stale mode.
+fn ensure_private_dir(path: &Path) -> Result<(), Error> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(path).map_err(wrap_io_err!(path, "Creating dir"))?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+                .map_err(wrap_io_err!(path, "Securing dir"))?;
+            return Ok(());
+        }
+        Err(err) => return Err(Error::IO(err, path.to_path_buf(), "Reading metadata")),
+    };
+
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(Error::IO(
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "download path is a symlink or not a directory; refusing to use it",
+            ),
+            path.to_path_buf(),
+            "Checking dir",
+        ));
+    }
+
+    let us = unsafe { libc::geteuid() };
+    if meta.uid() != us {
+        return Err(Error::IO(
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "download path belongs to uid {}, not to us (uid {us}); refusing to use it",
+                    meta.uid()
+                ),
+            ),
+            path.to_path_buf(),
+            "Checking owner",
+        ));
+    }
+
+    let mode = meta.permissions().mode();
+    if mode & 0o022 != 0 {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode & !0o022))
+            .map_err(wrap_io_err!(path, "Securing dir"))?;
+    }
+    Ok(())
+}
+
+/// Create a file for writing, refusing to follow a symlink at the final component.
+///
+/// The directory check above closes the door; this one keeps it shut if a link was planted
+/// before the mode was tightened, or if a caller points the download path somewhere looser.
+pub(crate) fn create_file_nofollow(path: &Path) -> std::io::Result<File> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
 /// Remote package management
 pub struct RepoManager {
     /// http sources
@@ -273,7 +349,7 @@ impl RepoManager {
             return Ok((path, r));
         }
         let mut writer = DownloadBackendWriter::ToFile(
-            File::create(&dst_path).map_err(wrap_io_err!(&dst_path, "Creating"))?,
+            create_file_nofollow(&dst_path).map_err(wrap_io_err!(&dst_path, "Creating"))?,
         );
         match self.download(&file, Some(len_hint), &mut writer) {
             Ok(r) => Ok((dst_path, r)),
@@ -304,11 +380,8 @@ impl RepoManager {
     }
 
     fn sync_keys_internal(&mut self, force: bool, cleanup: bool) -> Result<(), Error> {
-        let download_dir = &self.download_path;
-        if !download_dir.is_dir() {
-            fs::create_dir_all(&download_dir)
-                .map_err(wrap_io_err!(&download_dir, "Creating dir"))?;
-        }
+        let download_dir = self.download_path.clone();
+        ensure_private_dir(&download_dir)?;
         for (_, remote) in self.remote_map.iter_mut() {
             if remote.pubkey.is_some() {
                 continue;
@@ -346,10 +419,7 @@ impl RepoManager {
         len: Option<u64>,
         mut dest: &mut DownloadBackendWriter,
     ) -> Result<RemoteName, Error> {
-        if !self.download_path.exists() {
-            fs::create_dir_all(self.download_path.clone())
-                .map_err(wrap_io_err!(&self.download_path, "Creating dir"))?;
-        }
+        ensure_private_dir(&self.download_path)?;
 
         for rname in self.remotes.iter() {
             let Some(remote) = self.remote_map.get(rname) else {
@@ -379,10 +449,7 @@ impl RepoManager {
 
     /// Locate and return path and report which locals it's downloaded from.
     pub fn local_search(&self, file: &str) -> Result<Option<(RemoteName, PathBuf)>, Error> {
-        if !self.download_path.exists() {
-            fs::create_dir_all(self.download_path.clone())
-                .map_err(wrap_io_err!(self.download_path, "Creating directory"))?;
-        }
+        ensure_private_dir(&self.download_path)?;
 
         for rname in self.locals.iter() {
             let Some(remote) = self.remote_map.get(rname) else {
@@ -421,7 +488,18 @@ impl RepoManager {
         package: &PackageName,
         len_hint: u64,
     ) -> Result<(PathBuf, &RemotePath), Error> {
-        let local_path = self.get_local_path(&"".to_string(), package.as_str(), "pkgar");
+        // A scratch name, not a shared one. The download lands here before the remote it came
+        // from is known, and is then renamed to `<remote>_<package>.pkgar`. Naming it
+        // `_<package>.pkgar` meant two concurrent fetches of the same package wrote the same
+        // file and then both tried to rename it: the first won, the second failed with ENOENT on
+        // a file it had just written. Nothing reads this name, so making it unique costs nothing.
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let scratch = format!(
+            ".{}.{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        let local_path = self.get_local_path(&scratch, package.as_str(), "pkgar");
         let (local_path, remote) = self.sync_pkgar(&package, len_hint, local_path)?;
         if let Some(r) = self.remote_map.get(&remote) {
             if r.is_local() {
@@ -462,5 +540,78 @@ impl RepoManager {
     /// Get remote info, if available
     pub fn get_remote_info(&self, remote: &RemoteName) -> Option<&RemotePath> {
         self.remote_map.get(remote)
+    }
+}
+
+#[cfg(test)]
+mod download_dir_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(&dir);
+        dir
+    }
+
+    /// The hole itself: a symlink planted under the download directory turned a download into a
+    /// write to whatever it pointed at, with the privileges of whoever ran `pkg`.
+    #[test]
+    fn a_planted_symlink_does_not_receive_the_download() {
+        let dir = scratch("pkg_test_planted_symlink");
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("outside");
+        let link = dir.join("static.example.org_ncurses.pkgar");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = create_file_nofollow(&link).expect_err("a symlink must not be opened for writing");
+        assert!(
+            !target.exists(),
+            "the link target was created, so the write followed the link: {err}"
+        );
+    }
+
+    /// A directory anyone can write into is still plantable even when we own it, so the mode is
+    /// repaired rather than trusted.
+    #[test]
+    fn a_world_writable_download_dir_is_tightened() {
+        let dir = scratch("pkg_test_world_writable_dir");
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
+
+        ensure_private_dir(&dir).expect("a directory we own should be repaired, not rejected");
+
+        let mode = fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o022,
+            0,
+            "group/other write survived: mode is {:o}",
+            mode
+        );
+    }
+
+    /// A download path that is itself a symlink redirects every file we write, so it is refused
+    /// outright instead of repaired -- we cannot know who controls the far end.
+    #[test]
+    fn a_symlinked_download_dir_is_refused() {
+        let real = scratch("pkg_test_symlinked_dir_target");
+        let link = scratch("pkg_test_symlinked_dir");
+        fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert!(
+            ensure_private_dir(&link).is_err(),
+            "a symlinked download path was accepted"
+        );
+        let _ = fs::remove_file(&link);
+    }
+
+    /// A directory we create must not be group/other writable in the first place.
+    #[test]
+    fn a_new_download_dir_is_private() {
+        let dir = scratch("pkg_test_new_dir_private");
+        ensure_private_dir(&dir).expect("creating a fresh download dir");
+        let mode = fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o077, 0, "fresh dir is {:o}, expected 0700", mode);
     }
 }

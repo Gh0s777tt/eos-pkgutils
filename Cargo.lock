@@ -1248,6 +1248,7 @@ dependencies = [
  "futures-channel",
  "hex",
  "indicatif",
+ "libc",
  "pkgar",
  "pkgar-core",
  "reqwest",

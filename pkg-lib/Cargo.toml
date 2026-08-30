@@ -27,6 +27,7 @@ ed25519-dalek = { version = "2", optional = true }
 futures-channel = { version = "0.3.32", optional = true }
 serde = "1"
 serde_derive = "1"
+libc = "0.2"
 thiserror = "2"
 toml = "0.8.2"
 
