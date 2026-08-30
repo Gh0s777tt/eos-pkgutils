@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{cell::RefCell, rc::Rc};
 use std::{
     fs::File,
@@ -76,8 +77,39 @@ pub trait DownloadBackend {
         local_path: &Path,
         callback: Rc<RefCell<dyn Callback>>,
     ) -> Result<(), DownloadError> {
-        let mut output = DownloadBackendWriter::ToFile(File::create(local_path)?);
-        self.download(remote_path, remote_len, &mut output, callback)
+        // Download to a private temporary name and rename it into place, rather than writing
+        // the destination directly. Writing directly truncates the file before the first byte
+        // arrives, so anyone reading it meanwhile sees an empty or half-written file, and a
+        // download that fails leaves a 0-byte file behind that looks like a valid cached one.
+        // Two callers fetching the same key concurrently hit exactly that: one truncated the
+        // pubkey cache while the other parsed it and got "missing field `pkey`". Rename within
+        // a directory is atomic, so a reader sees either the old file or the complete new one.
+        //
+        // The temporary name carries pid and a counter because two threads in one process would
+        // otherwise pick the same one and race each other instead.
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let mut tmp_name = local_path.file_name().unwrap_or_default().to_os_string();
+        tmp_name.push(format!(
+            ".{}.{}.part",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let tmp_path = local_path.with_file_name(tmp_name);
+
+        // Not File::create: it follows a symlink at the final component, which is exactly how a
+        // planted link in the download directory turned a download into a write to an arbitrary
+        // path with the caller's privileges. See repo_manager::ensure_private_dir.
+        let mut output =
+            DownloadBackendWriter::ToFile(crate::repo_manager::create_file_nofollow(&tmp_path)?);
+        let result = self.download(remote_path, remote_len, &mut output, callback);
+        drop(output);
+        if result.is_err() {
+            // Leave nothing that a later run could mistake for a cached download.
+            let _ = std::fs::remove_file(&tmp_path);
+            return result;
+        }
+        std::fs::rename(&tmp_path, local_path)?;
+        Ok(())
     }
 
     fn download_to_buf(
