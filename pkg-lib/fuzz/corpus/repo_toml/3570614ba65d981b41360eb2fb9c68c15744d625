@@ -1,5 +1,0 @@
-bid = "eos-0.2.0"
-serial = 42
-expires = 1788000000
-[packages]
-eos-e5f034f5a5b9eb3179baa472aa48

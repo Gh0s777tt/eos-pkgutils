@@ -1,6 +1,0 @@
-bid = "eos-0.2.0"
-serial = 42
-expires = 1788000000
-[packages]
-eos-notes = "b2924856a8157d"
-eos-guard = "37550128f5282bb66afd81c0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`aaaaaaaa"

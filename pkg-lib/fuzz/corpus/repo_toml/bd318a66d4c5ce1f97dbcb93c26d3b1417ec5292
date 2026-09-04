@@ -1,6 +1,0 @@
-ser= 3
-expires = 9
-[pcakages]
-"a.b.c" = "ff"
-"x:yff"
-"x" = "ee"

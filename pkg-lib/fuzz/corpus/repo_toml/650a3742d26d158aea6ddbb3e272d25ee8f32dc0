@@ -1,6 +1,0 @@
-bid = "eos-0:2.0"
-serial = 42
-ex = 1788000000
-[packages]
-eos-notes ="b3"
-eos-guardz= "aaaaaaaaaaaaaaa"

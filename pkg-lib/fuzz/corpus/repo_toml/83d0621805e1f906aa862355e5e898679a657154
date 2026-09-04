@@ -1,9 +1,0 @@
-bid = "eos-1.2.0"
-serial = 42
-exires = 178801.000
-[packages]
-eos-osetn = "f6a-1.2.0"
-serial = 42
-expires = 178801.000
-[packages]
-eos-notes = "f6a4aa8daaa!aa4aa8daaa!aaa"

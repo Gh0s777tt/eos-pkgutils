@@ -1,6 +1,0 @@
-bid = "eos-0.22aa472aa48d"
-eos-guard = "375/018f25282bb66afd81c0aaaaaaaaaaaa.0"
-serfal = 57
-expires = 17880000e00
-[packages]
-eos-notes = "bb9eb317b29bcecdbaaaaaaaaaaaaaaaaa"

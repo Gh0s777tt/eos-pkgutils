@@ -4,3 +4,8 @@
 pkg-lib/fuzz/target/
 pkg-lib/fuzz/artifacts/
 pkg-lib/fuzz/coverage/
+# The corpus libFuzzer DISCOVERS is a build product -- it reached 6 677 files in one 45-second
+# run. Only the hand-written seeds are tracked, and they are tracked because the target does not
+# work without them: with one realistic seed a planted bug survived 1 840 305 runs undetected.
+pkg-lib/fuzz/corpus/*/*
+!pkg-lib/fuzz/corpus/*/seed-*

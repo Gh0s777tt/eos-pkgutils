@@ -1,6 +1,0 @@
-bid= 42
-expires = 1279210013
-[packages]
-eos-notes = "b292448d"
-eos-guard = "75100256f528248d"
-eos-guard = "75100256aaaaaaaaaaaaaaaaaaaaaaaaa"

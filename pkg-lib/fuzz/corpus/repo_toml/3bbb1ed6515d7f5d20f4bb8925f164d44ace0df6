@@ -1,7 +1,0 @@
-bid = "e/s-0.2.0"
-serial = 42
-expires = 1788000000
-[packages]
-eoss = "b292483db4f5a5b9eb317a2t48d"
-eos-gid = "eos-0.225d"
-eosseal= 2#	aaaaaaaaaaaaa"

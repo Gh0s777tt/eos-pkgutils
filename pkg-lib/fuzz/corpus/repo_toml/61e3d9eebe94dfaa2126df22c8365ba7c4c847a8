@@ -1,4 +1,0 @@
-bzl = 42
-expires = 1788000000
-[packages]
-eos-notes = "b292485aaaaaaaaaaaaaa!"

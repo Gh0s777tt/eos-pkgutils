@@ -1,3 +1,0 @@
-ses = 9
-[packages]
-"a								:b.c" =  "ee"
