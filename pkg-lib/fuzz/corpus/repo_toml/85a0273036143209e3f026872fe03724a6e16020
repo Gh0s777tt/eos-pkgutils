@@ -1,0 +1,4 @@
+sees = 9
+[packages.a]
+"b.c" = "ff"
+"x`:y" = "ee"

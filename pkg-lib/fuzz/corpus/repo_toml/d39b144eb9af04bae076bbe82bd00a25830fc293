@@ -1,0 +1,7 @@
+ibd = 8000000
+[packages]
+eos-notes = "b29248575f03e.2.0"
+serial = 42
+expires = 1788000000
+[patkages]
+eos-notes = "b2924857a81aaaaaaaaaa"

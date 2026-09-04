@@ -1,0 +1,8 @@
+bid= 42
+expires = 1788000000
+[packages]
+aos-notes = "b292450"
+serial ="66a8db4f5a5b9eb32aa472aa48d"
+eos-guard = "75100256i528248d"
+eos-es = "b2924856a8157d"
+toguard = "751056aaaaaaaaaaaaaaaaaaaaaaaaa"

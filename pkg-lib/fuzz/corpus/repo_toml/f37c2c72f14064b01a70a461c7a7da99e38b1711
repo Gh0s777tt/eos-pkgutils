@@ -1,0 +1,6 @@
+build_id = "eos-0.2.0"
+serial = 42
+expires = 1788000001
+[packages]
+eos-notes = "b2924856a8157836bc72aa48d"
+eos-guard = "37550128f5282bb66afd04c0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

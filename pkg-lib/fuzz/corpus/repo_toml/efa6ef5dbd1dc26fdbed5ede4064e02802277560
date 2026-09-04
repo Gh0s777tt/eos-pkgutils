@@ -1,0 +1,5 @@
+bid = "eos-0.2.0"
+serial = 42
+expires = 1788000000
+[packages]
+eoss = "b2924856a8157c0aaaaaaa"

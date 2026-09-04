@@ -1,1 +1,6 @@
 /target/
+
+# cargo-fuzz build output and the corpus it discovers (the hand-written seeds ARE tracked)
+pkg-lib/fuzz/target/
+pkg-lib/fuzz/artifacts/
+pkg-lib/fuzz/coverage/

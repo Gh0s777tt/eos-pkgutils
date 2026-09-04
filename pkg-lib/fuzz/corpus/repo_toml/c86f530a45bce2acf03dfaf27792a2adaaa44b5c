@@ -1,0 +1,4 @@
+serial= 1
+eires = 9
+[packages]
+".c" = "ee"

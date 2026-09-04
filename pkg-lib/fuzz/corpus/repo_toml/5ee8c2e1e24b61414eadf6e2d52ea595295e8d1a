@@ -1,0 +1,6 @@
+se= 3
+expire = 3
+expi.e = 9
+s = 9
+[packages]
+"a.b.c" =  "ee"

@@ -1,0 +1,29 @@
+# The parent is a workspace member, so this crate declares its own to stay out of it.
+[workspace]
+
+[package]
+name = "redox-pkg-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+# `default-features = false` on purpose. The default `library` feature pulls `pkgar`, and the
+# crates.io `pkgar 0.2.2` this tree locks does not carry `MergedTransaction` -- the E-OS fork
+# does, and the cookbook supplies it. A fuzz crate has no business dragging the whole install
+# machinery in to reach a TOML parser: `Repository::from_toml` needs none of it.
+[dependencies.redox-pkg]
+path = ".."
+default-features = false
+
+[[bin]]
+name = "repo_toml"
+path = "fuzz_targets/repo_toml.rs"
+test = false
+doc = false
+bench = false

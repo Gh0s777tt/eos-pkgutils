@@ -1,0 +1,6 @@
+bid = "eos-0.2.0"
+serial = 57
+expires = 1788000000
+[packages]
+eos-notes = "bb9eb317b29bcecdb72aa472aa48d"
+eos-guard = "3755018aaaaa"

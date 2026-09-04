@@ -1,0 +1,4 @@
+seri= 2
+[packages]
+".." = "aa"
+"." = "bb"

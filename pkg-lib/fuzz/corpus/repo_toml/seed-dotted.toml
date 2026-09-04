@@ -1,0 +1,5 @@
+serial = 3
+expires = 9
+[packages]
+"a.b.c" = "ff"
+"x:y" = "ee"

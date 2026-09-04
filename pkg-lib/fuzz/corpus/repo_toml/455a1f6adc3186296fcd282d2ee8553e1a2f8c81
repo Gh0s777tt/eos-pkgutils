@@ -1,0 +1,5 @@
+bid = "eos-1.2.0"
+al = 21
+exires = 178801.000
+[packages]
+eos-= 42

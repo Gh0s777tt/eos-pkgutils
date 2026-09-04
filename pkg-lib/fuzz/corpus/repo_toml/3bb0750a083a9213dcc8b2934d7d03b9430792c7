@@ -1,0 +1,4 @@
+spires = 9
+[packages]
+"a.b.c" = "ff"
+"`:y," = "ee"

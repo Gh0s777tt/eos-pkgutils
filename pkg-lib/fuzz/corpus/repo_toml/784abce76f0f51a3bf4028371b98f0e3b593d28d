@@ -1,0 +1,9 @@
+bid = "eos-0.2.0"
+serial = 42
+expires = 17880000
+[packages]
+eoserial = 1
+[packages]
+".." = "aa"
+"." = "s-notes = "b28= 8888856a8157d"
+eos-guard = "37550128f

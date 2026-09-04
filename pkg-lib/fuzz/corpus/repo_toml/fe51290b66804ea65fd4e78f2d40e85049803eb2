@@ -1,0 +1,10 @@
+bibid = "-1.2.0"
+serial = 42
+exires = 178801.000
+[packafes]
+eos-osetn = "f6a-1.2.0"
+serial = 42
+expires = 178801.00
+[packages]
+eosal = 42
+exires = 178

@@ -1,0 +1,7 @@
+ibd = 8000000
+[packages]
+eos-notes = "3e."
+serial = 42
+expires = 3576000000
+[packages]
+aa

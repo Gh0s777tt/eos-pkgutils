@@ -1,0 +1,5 @@
+bs = 17880000
+[packages]
+-guard = "75100256i528248d"
+eo-ses = "b2924856a8157d"
+eoguard = "75100256aaaaaaaaaaaaaaaaaaaaaaaaa"
