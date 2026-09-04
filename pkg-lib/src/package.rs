@@ -103,6 +103,14 @@ impl PackageName {
         if name.is_empty() {
             return Err(PackageError::PackageNameInvalid(name));
         }
+        // PR-019: a name made only of dots names no package, and `.` slipped through because the
+        // rule below counts dots rather than reading them. One dot is legal -- it separates
+        // `name.target` -- so `.` alone satisfied it while meaning "this directory". Two dots were
+        // already refused by that same counter, so `..` was never reachable; this closes the
+        // degenerate sibling rather than a traversal. Found by the `repo_toml` fuzz target.
+        if name.chars().all(|c| c == '.') {
+            return Err(PackageError::PackageNameInvalid(name));
+        }
         let mut pkg_separator = 0;
         let mut has_os_prefix = false;
         for c in name.chars() {
@@ -506,6 +514,29 @@ mod tests {
     target = "x86_64-unknown-redox"
     depends = ["ffmpeg:latest"]
     "#;
+
+    /// PR-019. A name that is nothing but dots is not a name.
+    ///
+    /// `.` was accepted until 2026-09-04: the validator counts dots and allows one, because
+    /// `name.target` needs it, so a lone `.` satisfied the count while meaning "this directory".
+    /// `repo_manager.rs` pastes a package name into `format!("{}/{}", remote.path, file)`, so an
+    /// index served by a mirror could put `<repo>/.` into a fetch. Not a traversal -- `..` was
+    /// already refused by the same counter -- but not a package either.
+    #[test]
+    fn package_name_rejects_names_made_only_of_dots() {
+        for bad in [".", "..", "...", "...."] {
+            assert!(
+                PackageName::new(bad.to_string()).is_err(),
+                "{bad:?} was accepted as a package name"
+            );
+        }
+        // The forms the dot rule exists FOR keep working. Without these this test would pass just
+        // as well with the dot handling deleted entirely.
+        assert!(PackageName::new("foo".to_string()).is_ok());
+        assert!(PackageName::new("foo.bar".to_string()).is_ok(), "name.target must stay legal");
+        assert!(PackageName::new("a.b".to_string()).is_ok());
+        assert!(PackageName::new("foo.bar.baz".to_string()).is_err(), "two dots stay refused");
+    }
 
     #[test]
     fn package_name_split() -> Result<(), PackageError> {
